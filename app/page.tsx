@@ -3,7 +3,7 @@ import Image from "next/image";
 export default function Home() {
   return (
     <main>
-      <h1>{process.env.NEXT_PUBLIC_APP_NAME}</h1>
+      <h1>This is my app</h1>
     </main>
   );
 }

@@ -109,5 +109,72 @@ Rules:
     result.confirmed = extracted.confirmed;
   }
 
+  // Fallbacks for relative dates and AM/PM times
+  const lower = message.toLowerCase();
+
+  const weekdayMap: Record<string, number> = {
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+    sunday: 7,
+  };
+
+  const nowDt = DateTime.now().setZone(tz);
+  let computedDate: string | null = null;
+
+  if (/\btomorrow\b/.test(lower)) {
+    computedDate = nowDt.plus({ days: 1 }).toISODate();
+  } else if (/\btoday\b/.test(lower)) {
+    computedDate = nowDt.toISODate();
+  } else {
+    const weekdayMatch = lower.match(/\b(next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+    if (weekdayMatch) {
+      const weekday = weekdayMap[weekdayMatch[2]];
+      let daysToAdd = (weekday - nowDt.weekday + 7) % 7;
+      if (daysToAdd === 0) daysToAdd = 7;
+      computedDate = nowDt.plus({ days: daysToAdd }).toISODate();
+    }
+  }
+
+  if (computedDate) {
+    const parsed = DateTime.fromISO(computedDate, { zone: tz });
+    const extractedDate = result.date ? DateTime.fromISO(result.date, { zone: tz }) : null;
+    if (!result.date || !extractedDate || !extractedDate.isValid || extractedDate.weekday !== parsed.weekday) {
+      result.date = computedDate;
+    }
+  }
+
+  if (!result.time) {
+    if (/\bnoon\b/.test(lower)) {
+      result.time = "12:00";
+    } else if (/\bmidnight\b/.test(lower)) {
+      result.time = "00:00";
+    } else {
+      const timeMatch = lower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+      if (timeMatch) {
+        let hour = parseInt(timeMatch[1], 10);
+        const minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+        const ampm = timeMatch[3];
+        if (ampm === "pm" && hour < 12) hour += 12;
+        if (ampm === "am" && hour === 12) hour = 0;
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+          result.time = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+        }
+      }
+    }
+  }
+
+  if (result.confirmed === undefined) {
+    if (/\b(confirm|confrim|confim|condim|cnofirm|yes|sounds good|book it)\b/i.test(message)) {
+      result.confirmed = true;
+    }
+    if (/\b(cancel|nope|no|never\s*mind|stop)\b/i.test(message)) {
+      result.confirmed = false;
+    }
+  }
+
   return result;
 }

@@ -49,15 +49,15 @@ function missingFields(d: Draft): (keyof Draft)[] {
 function nextQuestion(missing: (keyof Draft)[]) {
   switch (missing[0]) {
     case "serviceName":
-      return `What service would you like? Choose one: ${SERVICE_NAMES.join(", ")}`;
+      return `Which service would you like? We offer: ${SERVICE_NAMES.join(", ")}.`;
     case "date":
-      return "What date would you like? Use YYYY-MM-DD.";
+      return "What day works best for you? (You can say 'next Monday' or 'Feb 12')";
     case "time":
-      return "What time would you like? Use 24h HH:MM (example 14:30).";
+      return "What time works best? (e.g., 10am or 14:30)";
     case "customerName":
-      return "What’s your full name?";
+      return "May I have your full name?";
     case "customerPhone":
-      return "What phone number should we use to confirm your appointment?";
+      return "What’s the best phone number to confirm your appointment?";
     default:
       return "What would you like to book?";
   }
@@ -181,10 +181,27 @@ export async function POST(req: Request) {
         const result = await validateAndSave(draft);
 
         if (!result.ok) {
-          // confirmation attempted but invalid → force correction loop
-          reply = `Can't book that yet: ${result.reason}\n\nTell me a new date/time (YYYY-MM-DD HH:MM).`;
-          // wipe only time/date so they must re-enter
-          const updatedDraft: Draft = { ...draft, date: undefined, time: undefined, confirmed: false };
+          // confirmation attempted but invalid → guide user naturally
+          let updatedDraft: Draft = { ...draft, confirmed: false };
+          if (/opens at/i.test(result.reason)) {
+            updatedDraft = { ...updatedDraft, time: undefined };
+            reply = `${result.reason} What time works for you on ${draft.date}?`;
+          } else if (/closes at/i.test(result.reason)) {
+            updatedDraft = { ...updatedDraft, time: undefined };
+            reply = `${result.reason} What time works for you on ${draft.date}?`;
+          } else if (/closed that day/i.test(result.reason)) {
+            updatedDraft = { ...updatedDraft, date: undefined, time: undefined };
+            reply = `${result.reason} What day would you like instead?`;
+          } else if (/already taken/i.test(result.reason)) {
+            updatedDraft = { ...updatedDraft, time: undefined };
+            reply = `${result.reason} What time would you like instead?`;
+          } else if (/past/i.test(result.reason)) {
+            updatedDraft = { ...updatedDraft, date: undefined, time: undefined };
+            reply = `That time has already passed. What day and time work for you?`;
+          } else {
+            updatedDraft = { ...updatedDraft, date: undefined, time: undefined };
+            reply = `I couldn't book that yet: ${result.reason} What day and time work for you?`;
+          }
           await prisma.conversation.update({
             where: { id: conversation.id },
             data: { bookingDraft: updatedDraft as any },

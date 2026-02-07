@@ -46,6 +46,8 @@ model Conversation {
   customerPhone String?
   customerEmail String?
 
+  bookingDraft  Json?
+
   messages  Message[]
 
   @@index([status])

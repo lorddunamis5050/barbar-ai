@@ -208,6 +208,20 @@ export async function POST(req: Request) {
     const asksServices = /\b(service|services|menu|options|offer)\b/.test(lower);
     const asksServiceDuration = /\b(duration|service time|how long)\b/.test(lower);
     const asksHours = /\b(hours|open|opening|close|closing|business hours)\b/.test(lower);
+    const trimmed = lower.trim();
+    const isGreetingOnly = /^(hi|hello|hey|yo|good\s+morning|good\s+afternoon|good\s+evening)\b/i.test(trimmed)
+      && trimmed.split(/\s+/).length <= 3
+      && !/\b(book|appointment|schedule|haircut|beard|shave|wash|buzz|kids|trim|style|next|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(trimmed);
+
+    if (isGreetingOnly) {
+      const reply = "Hey! What service would you like?";
+
+      await prisma.message.create({
+        data: { conversationId: conversation.id, role: MessageRole.AGENT, content: reply },
+      });
+
+      return NextResponse.json({ conversationId: conversation.id, reply, draft: conversation.bookingDraft ?? {} });
+    }
 
     if (asksServices || asksServiceDuration || asksHours) {
       const parts: string[] = [];
@@ -298,7 +312,7 @@ export async function POST(req: Request) {
             data: { bookingDraft: updatedDraft as any },
           });
         } else {
-          reply = `You’re all set ✂️\nSee you ${formatDateLabel(draft.date)} at ${formatTimeLabel(draft.time)}.\nNeed to reschedule? Just message me.`;
+          reply = `Period 🤏🏾 — You’re all set ✂️\nSee you ${formatDateLabel(draft.date)} at ${formatTimeLabel(draft.time)}.\nThanks for booking.`;
           await prisma.conversation.update({
             where: { id: conversation.id },
             data: { status: ConversationStatus.CLOSED, bookingDraft: Prisma.DbNull },

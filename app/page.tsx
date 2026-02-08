@@ -34,7 +34,17 @@ export default function Home() {
         body: JSON.stringify({ message, conversationId }),
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+      let data: any = null;
+      if (contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        if (!response.ok) {
+          throw new Error(text || "Request failed");
+        }
+        throw new Error(text || "Unexpected response");
+      }
       if (!response.ok) {
         throw new Error(data?.error ?? "Request failed");
       }

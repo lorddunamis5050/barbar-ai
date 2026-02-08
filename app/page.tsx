@@ -81,6 +81,13 @@ export default function Home() {
           marginBottom: 16,
         }}
       >
+        <style>{`
+          @keyframes typingDots {
+            0% { opacity: .2; }
+            20% { opacity: 1; }
+            100% { opacity: .2; }
+          }
+        `}</style>
         {messages.length === 0 ? (
           <p style={{ color: "#999" }}>Start by typing a booking request below.</p>
         ) : (
@@ -111,6 +118,24 @@ export default function Home() {
             ))}
           </ul>
         )}
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "flex-start", marginTop: 12 }}>
+            <div
+              style={{
+                maxWidth: "80%",
+                padding: "10px 14px",
+                borderRadius: 12,
+                background: "#fff",
+                color: "#111827",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+              }}
+            >
+              <span style={{ animation: "typingDots 1.2s infinite" }}>•</span>
+              <span style={{ animation: "typingDots 1.2s 0.2s infinite" }}>•</span>
+              <span style={{ animation: "typingDots 1.2s 0.4s infinite" }}>•</span>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", gap: 12 }}>

@@ -51,11 +51,11 @@ function nextQuestion(missing: (keyof Draft)[]) {
     case "serviceName":
       return `Which service would you like? We offer: ${SERVICE_NAMES.join(", ")}.`;
     case "date":
-      return "What day works best for you? (You can say 'next Monday' or 'Feb 12')";
+      return "What day works best for you? (e.g., next Monday)";
     case "time":
       return "What time works best? (e.g., 10am or 14:30)";
     case "customerName":
-      return "May I have your full name?";
+      return "May I have your first name?";
     case "customerPhone":
       return "What’s the best phone number to confirm your appointment?";
     default:
@@ -64,7 +64,73 @@ function nextQuestion(missing: (keyof Draft)[]) {
 }
 
 function summary(d: Draft) {
-  return `Booking summary:\n- Service: ${d.serviceName}\n- Date: ${d.date}\n- Time: ${d.time}\n- Name: ${d.customerName}\n- Phone: ${d.customerPhone}\n\nReply “confirm” to book, or tell me what to change.`;
+  const dateLabel = d.date ? DateTime.fromISO(d.date).toFormat("cccc, LLL d") : "";
+  const timeLabel = d.time
+    ? DateTime.fromFormat(d.time, "HH:mm").toFormat("h:mm a")
+    : "";
+  return `Here’s what I’ve got ✨\n${d.serviceName}\n${dateLabel}${timeLabel ? ` — ${timeLabel}` : ""}\n\nBooking for ${d.customerName}\nPhone: ${d.customerPhone}\n\nType “confirm” to lock it in, or tell me what to change.`;
+}
+
+function formatDateLabel(date?: string) {
+  if (!date) return "";
+  const dt = DateTime.fromISO(date);
+  if (!dt.isValid) return date;
+  return dt.toFormat("cccc, LLL d");
+}
+
+function formatTimeLabel(time?: string) {
+  if (!time) return "";
+  const dt = DateTime.fromFormat(time, "HH:mm");
+  if (!dt.isValid) return time;
+  return dt.toFormat("h:mm a");
+}
+
+function isVagueTime(message: string) {
+  return /\b(morning|afternoon|evening|tonight|later)\b/i.test(message);
+}
+
+async function suggestTimes(date: string, serviceName: string) {
+  const mins = minutesForService(serviceName);
+  if (!mins) return [] as string[];
+
+  const tz = getTz();
+  const day = DateTime.fromISO(date, { zone: tz });
+  if (!day.isValid) return [] as string[];
+
+  const dayKey = day.toFormat("cccc").toLowerCase();
+  const hours = HOURS[dayKey];
+  if (!hours) return [] as string[];
+
+  const open = DateTime.fromISO(`${date}T${hours.open}`, { zone: tz });
+  const close = DateTime.fromISO(`${date}T${hours.close}`, { zone: tz });
+  const now = DateTime.now().setZone(tz);
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
+      startAt: { lt: close.toJSDate() },
+      endAt: { gt: open.toJSDate() },
+    },
+    select: { startAt: true, endAt: true },
+  });
+
+  const stepMinutes = 30;
+  const suggestions: string[] = [];
+
+  for (let t = open; t.plus({ minutes: mins + BUFFER_MIN }) <= close; t = t.plus({ minutes: stepMinutes })) {
+    if (!enforceSameDayLead(t, now).ok) continue;
+    const end = t.plus({ minutes: mins + BUFFER_MIN });
+
+    const overlaps = bookings.some((b) => {
+      return t.toJSDate() < b.endAt && end.toJSDate() > b.startAt;
+    });
+    if (overlaps) continue;
+
+    suggestions.push(t.toFormat("h:mm a"));
+    if (suggestions.length >= 5) break;
+  }
+
+  return suggestions;
 }
 
 async function validateAndSave(draft: Draft) {
@@ -146,12 +212,12 @@ export async function POST(req: Request) {
     if (asksServices || asksServiceDuration || asksHours) {
       const parts: string[] = [];
       if (asksServices || asksServiceDuration) {
-        parts.push(`Services and durations: ${formatServiceList()}.`);
+        parts.push(`Here are our services and durations: ${formatServiceList()}.`);
       }
       if (asksHours) {
-        parts.push(`Business hours (${getTz()}): ${formatHours()}.`);
+        parts.push(`We’re open (${getTz()}): ${formatHours()}.`);
       }
-
+      parts.push("What would you like to book?");
       const reply = parts.join(" ").trim();
 
       await prisma.message.create({
@@ -174,7 +240,33 @@ export async function POST(req: Request) {
     let reply = "";
 
     if (missing.length > 0) {
-      reply = nextQuestion(missing);
+      if (missing.includes("serviceName")) {
+        reply = nextQuestion(["serviceName"]);
+      } else if (missing.includes("date") && missing.includes("time")) {
+        const serviceLabel = draft.serviceName ? `Perfect — ${draft.serviceName}. ` : "";
+        reply = `${serviceLabel}What day and time work best for you? (e.g., next Monday at 10am)`;
+      } else if (missing.includes("date")) {
+        const timeLabel = draft.time ? ` at ${formatTimeLabel(draft.time)}` : "";
+        reply = `Got it${timeLabel}. What day works best for you?`;
+      } else if (missing.includes("time")) {
+        const dateLabel = formatDateLabel(draft.date);
+        const options =
+          draft.date && draft.serviceName
+            ? await suggestTimes(draft.date, draft.serviceName)
+            : [];
+        const optionText = options.length ? ` Here are a few options: ${options.join(", ")}.` : "";
+        const prefix = isVagueTime(body.message) ? "No problem—" : "";
+        reply = `${prefix}What time works best on ${dateLabel}?${optionText}`;
+      } else if (missing.includes("customerName")) {
+        const dateLabel = formatDateLabel(draft.date);
+        const timeLabel = formatTimeLabel(draft.time);
+        reply = `Perfect — ${draft.serviceName} on ${dateLabel} at ${timeLabel}. What’s your first name?`;
+      } else if (missing.includes("customerPhone")) {
+        const name = draft.customerName ? draft.customerName.split(" ")[0] : "";
+        reply = `${name ? `Thanks, ${name}. ` : ""}What’s the best phone number to confirm your appointment?`;
+      } else {
+        reply = nextQuestion(missing);
+      }
     } else {
       // All fields collected
       if (draft.confirmed) {
@@ -183,31 +275,30 @@ export async function POST(req: Request) {
         if (!result.ok) {
           // confirmation attempted but invalid → guide user naturally
           let updatedDraft: Draft = { ...draft, confirmed: false };
-          if (/opens at/i.test(result.reason)) {
+          const options = draft.date && draft.serviceName ? await suggestTimes(draft.date, draft.serviceName) : [];
+          const optionText = options.length ? ` Try: ${options.join(", ")}.` : "";
+          if (/opens at/i.test(result.reason) || /closes at/i.test(result.reason)) {
             updatedDraft = { ...updatedDraft, time: undefined };
-            reply = `${result.reason} What time works for you on ${draft.date}?`;
-          } else if (/closes at/i.test(result.reason)) {
-            updatedDraft = { ...updatedDraft, time: undefined };
-            reply = `${result.reason} What time works for you on ${draft.date}?`;
+            reply = `Sorry — ${result.reason} What time works for you on ${formatDateLabel(draft.date)}?${optionText}`;
           } else if (/closed that day/i.test(result.reason)) {
             updatedDraft = { ...updatedDraft, date: undefined, time: undefined };
-            reply = `${result.reason} What day would you like instead?`;
+            reply = `Sorry — ${result.reason} What day would you like instead?`;
           } else if (/already taken/i.test(result.reason)) {
             updatedDraft = { ...updatedDraft, time: undefined };
-            reply = `${result.reason} What time would you like instead?`;
+            reply = `${result.reason} What time would you like instead?${optionText}`;
           } else if (/past/i.test(result.reason)) {
             updatedDraft = { ...updatedDraft, date: undefined, time: undefined };
             reply = `That time has already passed. What day and time work for you?`;
           } else {
             updatedDraft = { ...updatedDraft, date: undefined, time: undefined };
-            reply = `I couldn't book that yet: ${result.reason} What day and time work for you?`;
+            reply = `I couldn’t book that yet. What day and time work for you?`;
           }
           await prisma.conversation.update({
             where: { id: conversation.id },
             data: { bookingDraft: updatedDraft as any },
           });
         } else {
-          reply = `✅ Booked! Your appointment is confirmed.\n\n- Service: ${draft.serviceName}\n- Date: ${draft.date}\n- Time: ${draft.time}\n\nBooking ID: ${result.bookingId}`;
+          reply = `You’re all set ✂️\nSee you ${formatDateLabel(draft.date)} at ${formatTimeLabel(draft.time)}.\nNeed to reschedule? Just message me.`;
           await prisma.conversation.update({
             where: { id: conversation.id },
             data: { status: ConversationStatus.CLOSED, bookingDraft: Prisma.DbNull },

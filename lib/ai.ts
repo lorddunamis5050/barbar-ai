@@ -130,12 +130,57 @@ Rules:
   } else if (/\btoday\b/.test(lower)) {
     computedDate = nowDt.toISODate();
   } else {
+    const weekMatch = lower.match(/\b(in\s+|next\s+)?(\d+|one|two|three|four)\s+weeks?\b/);
+    const monthMatch = lower.match(/\b(in\s+|next\s+)?(\d+|one|two|three|four)\s+months?\b/);
+    const wordToNumber: Record<string, number> = {
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+    };
+
+    if (weekMatch) {
+      const raw = weekMatch[2];
+      const count = typeof raw === "string" && /\d+/.test(raw) ? parseInt(raw, 10) : wordToNumber[raw] ?? 1;
+      const base = nowDt.plus({ weeks: count });
+
+      const weekdayMatch = lower.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+      if (weekdayMatch) {
+        const weekday = weekdayMap[weekdayMatch[1]];
+        let daysToAdd = (weekday - base.weekday + 7) % 7;
+        computedDate = base.plus({ days: daysToAdd }).toISODate();
+      } else {
+        computedDate = base.toISODate();
+      }
+    } else if (monthMatch) {
+      const raw = monthMatch[2];
+      const count = typeof raw === "string" && /\d+/.test(raw) ? parseInt(raw, 10) : wordToNumber[raw] ?? 1;
+      const base = nowDt.plus({ months: count });
+
+      const weekdayMatch = lower.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+      if (weekdayMatch) {
+        const weekday = weekdayMap[weekdayMatch[1]];
+        let daysToAdd = (weekday - base.weekday + 7) % 7;
+        computedDate = base.plus({ days: daysToAdd }).toISODate();
+      } else {
+        computedDate = base.toISODate();
+      }
+    }
+
     const weekdayMatch = lower.match(/\b(next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
-    if (weekdayMatch) {
+    if (!computedDate && weekdayMatch) {
       const weekday = weekdayMap[weekdayMatch[2]];
-      let daysToAdd = (weekday - nowDt.weekday + 7) % 7;
-      if (daysToAdd === 0) daysToAdd = 7;
-      computedDate = nowDt.plus({ days: daysToAdd }).toISODate();
+      const wantsTwoWeeks = /\b(next\s+two\s+weeks|in\s+two\s+weeks|2\s+weeks)\b/i.test(lower);
+      let base = nowDt;
+      if (wantsTwoWeeks) {
+        base = base.plus({ days: 14 });
+      }
+      let daysToAdd = (weekday - base.weekday + 7) % 7;
+      if (daysToAdd === 0) {
+        computedDate = base.toISODate();
+      } else {
+        computedDate = base.plus({ days: daysToAdd }).toISODate();
+      }
     }
   }
 
